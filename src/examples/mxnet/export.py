@@ -56,12 +56,6 @@ parser.add_argument('--model_name',
                     choices=['bert_12_768_12', 'bert_24_1024_16'],
                     help='BERT model name. Options are "bert_12_768_12" and "bert_24_1024_16"')
 
-parser.add_argument('--task',
-                    type=str,
-                    choices=['classification', 'regression'],
-                    required=True,
-                    help='Task to export. Options are "classification", "regression"')
-
 parser.add_argument('--dataset_name',
                     type=str,
                     default='book_corpus_wiki_en_uncased',
@@ -78,6 +72,11 @@ parser.add_argument('--output_dir',
                     default='./output_dir',
                     help='The directory where the exported model symbol will be created. '
                          'The default is ./output_dir')
+
+parser.add_argument('--batch_size',
+                    type=int,
+                    default=1,
+                    help='The batch size of inputs.')
 
 parser.add_argument('--seq_length',
                     type=int,
@@ -120,27 +119,14 @@ log.info(args)
 ###############################################################################
 
 seq_length = args.seq_length
-
-if args.task == 'classification':
-    bert, _ = get_model(
-        name=args.model_name,
-        dataset_name=args.dataset_name,
-        pretrained=False,
-        use_pooler=True,
-        use_decoder=False,
-        use_classifier=False)
-    net = BERTClassifier(bert, num_classes=2, dropout=args.dropout)
-elif args.task == 'regression':
-    bert, _ = get_model(
-        name=args.model_name,
-        dataset_name=args.dataset_name,
-        pretrained=False,
-        use_pooler=True,
-        use_decoder=False,
-        use_classifier=False)
-    net = BERTClassifier(bert, num_classes=1, dropout=args.dropout)
-else:
-    raise ValueError('unknown task: %s'%args.task)
+bert, _ = get_model(
+    name=args.model_name,
+    dataset_name=args.dataset_name,
+    pretrained=False,
+    use_pooler=True,
+    use_decoder=False,
+    use_classifier=False)
+net = BERTClassifier(bert, num_classes=2, dropout=args.dropout)
 
 if args.model_parameters:
     net.load_parameters(args.model_parameters)
@@ -155,7 +141,7 @@ net.hybridize(static_alloc=True, static_shape=True)
 #                            Prepare dummy input data                         #
 ###############################################################################
 
-test_batch_size = 1
+test_batch_size = args.batch_size
 
 inputs = mx.nd.arange(test_batch_size * seq_length)
 inputs = inputs.reshape(shape=(test_batch_size, seq_length))
@@ -209,7 +195,7 @@ def export(batch, prefix):
 
 def infer(prefix):
     """Evaluate the model on a mini-batch."""
-    log.info('Start inference ... ')
+    log.info('Test inference with the model ... ')
 
     # import with SymbolBlock. Alternatively, you can use Module.load APIs.
     imported_net = mx.gluon.nn.SymbolBlock.imports(prefix + '-symbol.json',
@@ -236,11 +222,25 @@ def infer(prefix):
     log.info('Batch size={}, Thoughput={:.2f} batches/s'
              .format(test_batch_size, num_trials / (toc - tic)))
 
+def neuron_compile(prefix):
+    sym, args, aux = mx.model.load_checkpoint(prefix, 0)
+
+    # compile for Inferentia using Neuron
+    inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
+              "data1" : mx.nd.ones(shape=(1, 128), name='data1'),
+              "data2" : mx.nd.ones(shape=(1,), name='data2')}
+
+    sym, args, aux = mx.contrib.neuron.compile(sym, args, aux, inputs)
+
+    # save compiled model
+    mx.model.save_checkpoint(prefix + "_compiled", 0, sym, args, aux)
+
 
 ###############################################################################
 #                              Export the model                               #
 ###############################################################################
 if __name__ == '__main__':
-    prefix = os.path.join(args.output_dir, args.task)
+    prefix = os.path.join(args.output_dir, 'classification')
     export(batch, prefix)
     infer(prefix)
+    neuron_compile(prefix)
