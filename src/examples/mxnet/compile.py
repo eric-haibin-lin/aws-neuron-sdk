@@ -154,7 +154,21 @@ batch = inputs, token_types, valid_length
 #            Start Alternative Inferentia Compatible Implementation           #
 ###############################################################################
 
+
+import math
 f = mx.sym
+
+def broadcast_axis(data=None, axis=None, size=None, out=None, name=None, **kwargs):
+    assert axis == 1
+    ones = f.ones((1,size,1,1))
+    out = f.broadcast_div(data, ones)
+    return out
+
+def div_sqrt_dim(data=None, out=None, name=None, **kwargs):
+    assert '1024' in args.model_name or '768' in args.model_name
+    units = 1024/16 if '1024' in args.model_name else 768/12
+    return data / math.sqrt(units)
+
 def embedding_op(data=None, weight=None, input_dim=None, output_dim=None, dtype=None,
                  sparse_grad=None, out=None, name=None, batch_mode=True, **kwargs):
     repeat = seq_length if batch_mode else test_batch_size * seq_length
@@ -172,7 +186,6 @@ def embedding(self, F, x, weight):
     return out
 
 def gelu(self, F, x):
-    import math
     return 0.5 * x * (1 + F.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * (x ** 3))))
 
 def layer_norm(self, F, data, gamma, beta):
@@ -199,6 +212,8 @@ mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
 mx.sym.contrib.arange_like = arange_like
 mx.sym.Embedding = embedding_op
+mx.sym.contrib.div_sqrt_dim = div_sqrt_dim
+mx.sym.broadcast_axis = broadcast_axis
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #

@@ -9,6 +9,7 @@ parser.add_argument('--seq_length', type=int,
                     default=128, help='The maximum total input sequence length.')
 args = parser.parse_args()
 
+# TODO: we assume batch_size = 1 in this demo
 sentence = 'neuron compiler is awesome!'
 bert_model, vocabulary = nlp.model.get_model('bert_12_768_12',
                                     dataset_name='book_corpus_wiki_en_uncased',
