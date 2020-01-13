@@ -80,7 +80,7 @@ parser.add_argument('--batch_size',
 
 parser.add_argument('--seq_length',
                     type=int,
-                    default=64,
+                    default=128,
                     help='The maximum total input sequence length after WordPiece tokenization.'
                          'Sequences longer than this needs to be truncated, and sequences shorter '
                          'than this needs to be padded. Default is 384')
@@ -153,6 +153,24 @@ batch = inputs, token_types, valid_length
 ###############################################################################
 #            Start Alternative Inferentia Compatible Implementation           #
 ###############################################################################
+
+f = mx.sym
+def embedding_op(data=None, weight=None, input_dim=None, output_dim=None, dtype=None,
+                 sparse_grad=None, out=None, name=None, batch_mode=True, **kwargs):
+    repeat = seq_length if batch_mode else test_batch_size * seq_length
+    output_shape = (seq_length, output_dim) if batch_mode else (test_batch_size, seq_length, output_dim)
+    indices = data.reshape((-1))
+    x_idx = data.repeat(output_dim).reshape((1, -1))
+    y_idx = f.arange(output_dim, repeat=repeat).reshape((output_dim, -1)).transpose()
+    x_y = f.concat(x_idx, y_idx.reshape((1, -1)), dim=0)
+    encoded = f.gather_nd(weight, x_y)
+    encoded = encoded.reshape(output_shape)
+    return encoded
+
+def embedding(self, F, x, weight):
+    out = embedding_op(x, weight, name='fwd', batch_mode=False, **self._kwargs)
+    return out
+
 def gelu(self, F, x):
     import math
     return 0.5 * x * (1 + F.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * (x ** 3))))
@@ -171,14 +189,17 @@ def arange_like(x, axis):
         slice_x = x.slice(begin=(0, 0, 0), end=(None, 1, 1)).reshape((-1))
     else:
         raise NotImplementedError
-    zeros = mx.sym.zeros_like(slice_x)
-    arange = mx.sym.arange(start=0, repeat=1, step=1, infer_range=True, dtype='float32')
-    arange = mx.sym.elemwise_add(arange, zeros)
+    zeros = f.zeros_like(slice_x)
+    arange = f.arange(start=0, repeat=1, step=1, infer_range=True, dtype='float32')
+    arange = f.elemwise_add(arange, zeros)
     return arange
 
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
+mx.gluon.nn.Embedding.hybrid_forward = embedding
 mx.sym.contrib.arange_like = arange_like
+mx.sym.Embedding = embedding_op
+
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
 ###############################################################################
@@ -201,9 +222,8 @@ def infer(prefix):
                                                    ['data0', 'data1', 'data2'],
                                                    prefix + '-0000.params')
 
-    # exported model should be length-agnostic. Using a different seq_length should work
-    inputs = mx.nd.arange(test_batch_size * (seq_length + 10))
-    inputs = inputs.reshape(shape=(test_batch_size, seq_length + 10))
+    inputs = mx.nd.arange(test_batch_size * (seq_length))
+    inputs = inputs.reshape(shape=(test_batch_size, seq_length))
     token_types = mx.nd.zeros_like(inputs)
     valid_length = mx.nd.arange(test_batch_size)
 

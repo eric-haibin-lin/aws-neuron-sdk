@@ -37,5 +37,4 @@ python compile.py --output_dir neuron_bert --seq_length 128  --batch_size 1 --mo
 Run the command below to run BERT inference on CPU:
 ```bash
 python inference.py --compiled_model neuron_bert/classification
-
 ```
