@@ -22,7 +22,8 @@ pip install https://github.com/dmlc/gluon-nlp/tarball/v0.9.x
 ```
 
 We used publicly available instructions to generate a saved model for open source BERT using fine-tuned SST-2 weights.
-The steps to generate this model can be found [here](https://gluon-nlp.mxnet.io/v0.9.x/model_zoo/bert/index.html#sentence-classification).
+The steps to generate this model can be found [here](https://gluon-nlp.mxnet.io/v0.9.x/model_zoo/bert/index.html#sentence-classification),
+or you can download a trained model on SST-2 [here](https://dist-bert.s3.amazonaws.com/demo/finetune/sst.params).
 Place the saved model in a directory named "gluonnlp_bert" under the `bert_demo` directory.
 
 Run the following to compile BERT for an input size of 128 and batch size of 1.
@@ -30,7 +31,6 @@ The compilation output is stored in `neuron_bert`.
 ```
 python compile.py --output_dir neuron_bert --seq_length 128  --batch_size 1 --model_parameters gluonnlp_bert/net.params
 ```
-If you don't have a trained SST-2 model, you can remove `--model_parameters` to get an exported BERT model initialized with random weights. 
 
 ## Running the inference demo
 

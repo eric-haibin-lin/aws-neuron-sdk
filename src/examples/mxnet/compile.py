@@ -160,10 +160,9 @@ def gelu(self, F, x):
 def layer_norm(self, F, data, gamma, beta):
     mean = data.mean(axis=self._axis, keepdims=True)
     delta = F.broadcast_sub(data, mean)
-    square = data.square()
-    norm = square.sum(axis=self._axis, keepdims=True).sqrt()
-    unit = F.broadcast_div(delta, norm + self._epsilon)
-    return F.broadcast_add(F.broadcast_mul(gamma, unit), beta)
+    var = (delta ** 2).mean(axis=self._axis, keepdims=True)
+    X_hat = F.broadcast_div(delta, var.sqrt() + self._epsilon)
+    return F.broadcast_add(F.broadcast_mul(gamma, X_hat), beta)
 
 def arange_like(x, axis):
     if axis == 1:

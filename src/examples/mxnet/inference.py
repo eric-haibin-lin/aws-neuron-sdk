@@ -2,24 +2,23 @@ import mxnet as mx
 import gluonnlp as nlp
 import argparse
 
-parser = argparse.ArgumentParser(description='Export hybrid BERT base model.')
+parser = argparse.ArgumentParser(description='Run inference with compiled BERT model.')
 
-parser.add_argument('--compiled_model',
-                    type=str,
-                    default=None,
-                    help='The compiled neuron model.')
+parser.add_argument('--compiled_model', type=str,
+                    required=True, help='The compiled neuron model.')
 args = parser.parse_args()
 
-sentence = 'Neuron is awesome'
-_, vocabulary = nlp.model.get_model('bert_12_768_12',
+sentence = 'neuron compiler is awesome!'
+bert_model, vocabulary = nlp.model.get_model('bert_12_768_12',
                                     dataset_name='book_corpus_wiki_en_uncased',
-                                    pretrained=False)
+                                    pretrained=False,
+                                    use_decoder=False,
+                                    use_classifier=False)
 tokenizer = nlp.data.BERTTokenizer(vocabulary)
-transform = nlp.data.BERTSentenceTransform(tokenizer, max_seq_length=128,
-                                           pair=False, pad=False)
+transform = nlp.data.BERTSentenceTransform(tokenizer, max_seq_length=128, pair=False)
+inputs, seq_len, token_types = transform([sentence])
 
 sym, args, aux = mx.model.load_checkpoint(args.compiled_model, 0)
-inputs, seq_len, token_types = transform([sentence])
 args['data0'] = mx.nd.array([inputs])
 args['data1'] = mx.nd.array([token_types])
 args['data2'] = mx.nd.array([seq_len])
