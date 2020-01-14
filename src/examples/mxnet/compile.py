@@ -209,7 +209,7 @@ def arange_like(x, axis):
     return arange
 
 def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwargs):
-    return x + y * 0 + condition * 0
+    return x
 
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
