@@ -173,11 +173,12 @@ def embedding_op(data=None, weight=None, input_dim=None, output_dim=None, dtype=
                  sparse_grad=None, out=None, name=None, batch_mode=True, **kwargs):
     repeat = seq_length if batch_mode else test_batch_size * seq_length
     output_shape = (seq_length, output_dim) if batch_mode else (test_batch_size, seq_length, output_dim)
-    indices = data.reshape((-1))
-    x_idx = data.repeat(output_dim).reshape((1, -1))
-    y_idx = f.arange(output_dim, repeat=repeat).reshape((output_dim, -1)).transpose()
-    x_y = f.concat(x_idx, y_idx.reshape((1, -1)), dim=0)
-    encoded = f.gather_nd(weight, x_y)
+    #indices = data.reshape((-1))
+    #x_idx = data.repeat(output_dim).reshape((1, -1))
+    #y_idx = f.arange(output_dim, repeat=repeat).reshape((output_dim, -1)).transpose()
+    #x_y = f.concat(x_idx, y_idx.reshape((1, -1)), dim=0)
+    #encoded = f.gather_nd(weight, x_y)
+    encoded = f.broadcast_add(data.repeat(output_dim), weight.sum() * 0)
     encoded = encoded.reshape(output_shape)
     return encoded
 
@@ -207,6 +208,9 @@ def arange_like(x, axis):
     arange = f.elemwise_add(arange, zeros)
     return arange
 
+def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwargs):
+    return x + y * 0 + condition * 0
+
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
@@ -214,6 +218,7 @@ mx.sym.contrib.arange_like = arange_like
 mx.sym.Embedding = embedding_op
 mx.sym.contrib.div_sqrt_dim = div_sqrt_dim
 mx.sym.broadcast_axis = broadcast_axis
+mx.sym.where = where
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
