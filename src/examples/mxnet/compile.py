@@ -90,6 +90,10 @@ parser.add_argument('--dropout',
                     default=0.1,
                     help='The dropout probability for the classification/regression head.')
 
+parser.add_argument('--debug',
+                    action='store_true',
+                    help='Use imperative mode for debugging')
+
 args = parser.parse_args()
 
 # create output dir
@@ -134,8 +138,8 @@ else:
     net.initialize()
     warnings.warn('--model_parameters is not provided. The parameter checkpoint (.params) '
                   'file will be created based on default parameter initialization.')
-
-net.hybridize(static_alloc=True, static_shape=True)
+if not args.debug:
+    net.hybridize(static_alloc=True, static_shape=True)
 
 ###############################################################################
 #                            Prepare dummy input data                         #
@@ -156,7 +160,7 @@ batch = inputs, token_types, valid_length
 
 
 import math
-f = mx.sym
+f = mx.nd if args.debug else mx.sym
 
 def broadcast_axis(data=None, axis=None, size=None, out=None, name=None, **kwargs):
     assert axis == 1
@@ -178,8 +182,8 @@ def embedding_op(data=None, weight=None, input_dim=None, output_dim=None, dtype=
     #y_idx = f.arange(output_dim, repeat=repeat).reshape((output_dim, -1)).transpose()
     #x_y = f.concat(x_idx, y_idx.reshape((1, -1)), dim=0)
     #encoded = f.gather_nd(weight, x_y)
-    encoded = f.broadcast_add(data.repeat(output_dim), weight.sum() * 0)
-    encoded = encoded.reshape(output_shape)
+    #encoded = f.broadcast_add(data.repeat(output_dim), weight.sum() * 0)
+    encoded = f.broadcast_add(f.ones(output_shape), weight.sum() * 0 + data.sum() * 0)
     return encoded
 
 def embedding(self, F, x, weight):
@@ -204,7 +208,10 @@ def arange_like(x, axis):
     else:
         raise NotImplementedError
     zeros = f.zeros_like(slice_x)
-    arange = f.arange(start=0, repeat=1, step=1, infer_range=True, dtype='float32')
+    if args.debug:
+        arange = f.arange(start=0, repeat=1, step=1, stop=slice_x.shape[0], dtype='float32')
+    else:
+        arange = f.arange(start=0, repeat=1, step=1, stop=seq_length, dtype='float32')
     arange = f.elemwise_add(arange, zeros)
     return arange
 
@@ -214,11 +221,11 @@ def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwar
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
-mx.sym.contrib.arange_like = arange_like
-mx.sym.Embedding = embedding_op
-mx.sym.contrib.div_sqrt_dim = div_sqrt_dim
-mx.sym.broadcast_axis = broadcast_axis
-mx.sym.where = where
+f.contrib.arange_like = arange_like
+f.Embedding = embedding_op
+f.contrib.div_sqrt_dim = div_sqrt_dim
+f.broadcast_axis = broadcast_axis
+f.where = where
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
@@ -229,6 +236,8 @@ def export(batch, prefix):
     log.info('Exporting the model ... ')
     inputs, token_types, valid_length = batch
     net(inputs, token_types, valid_length)
+    if args.debug:
+        exit()
     net.export(prefix, epoch=0)
     assert os.path.isfile(prefix + '-symbol.json')
     assert os.path.isfile(prefix + '-0000.params')
