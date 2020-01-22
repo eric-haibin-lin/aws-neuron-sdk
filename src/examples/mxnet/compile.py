@@ -94,6 +94,10 @@ parser.add_argument('--debug',
                     action='store_true',
                     help='Use imperative mode for debugging')
 
+parser.add_argument('--no_length',
+                    action='store_true',
+                    help='Include valid length as inputs')
+
 args = parser.parse_args()
 
 # create output dir
@@ -235,7 +239,7 @@ def export(batch, prefix):
     """Export the model."""
     log.info('Exporting the model ... ')
     inputs, token_types, valid_length = batch
-    net(inputs, token_types, valid_length)
+    out = net(inputs, token_types) if args.no_length else net(inputs, token_types, valid_length)
     if args.debug:
         exit()
     net.export(prefix, epoch=0)
@@ -247,9 +251,9 @@ def infer(prefix):
     log.info('Test inference with the model ... ')
 
     # import with SymbolBlock. Alternatively, you can use Module.load APIs.
+    names = ['data0', 'data1', 'data2'] if not args.no_length else ['data0', 'data1']
     imported_net = mx.gluon.nn.SymbolBlock.imports(prefix + '-symbol.json',
-                                                   ['data0', 'data1', 'data2'],
-                                                   prefix + '-0000.params')
+                                                   names, prefix + '-0000.params')
 
     inputs = mx.nd.arange(test_batch_size * (seq_length))
     inputs = inputs.reshape(shape=(test_batch_size, seq_length))
@@ -257,31 +261,34 @@ def infer(prefix):
     valid_length = mx.nd.arange(test_batch_size)
 
     # run forward inference
-    imported_net(inputs, token_types, valid_length)
+    out = imported_net(inputs, token_types) if args.no_length else imported_net(inputs, token_types, valid_length)
     mx.nd.waitall()
 
     # benchmark speed after warmup
     tic = time.time()
     num_trials = 10
     for _ in range(num_trials):
-        imported_net(inputs, token_types, valid_length)
+        out = imported_net(inputs, token_types) if args.no_length else imported_net(inputs, token_types, valid_length)
     mx.nd.waitall()
     toc = time.time()
     log.info('Batch size={}, Thoughput={:.2f} batches/s'
              .format(test_batch_size, num_trials / (toc - tic)))
 
 def neuron_compile(prefix):
-    sym, args, aux = mx.model.load_checkpoint(prefix, 0)
-
     # compile for Inferentia using Neuron
-    inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
-              "data1" : mx.nd.ones(shape=(1, 128), name='data1'),
-              "data2" : mx.nd.ones(shape=(1,), name='data2')}
+    if not args.no_length:
+        inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
+                  "data1" : mx.nd.ones(shape=(1, 128), name='data1'),
+                  "data2" : mx.nd.ones(shape=(1,), name='data2')}
+    else:
+        inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
+                  "data1" : mx.nd.ones(shape=(1, 128), name='data1')}
 
-    sym, args, aux = mx.contrib.neuron.compile(sym, args, aux, inputs)
+    sym, args_loaded, aux = mx.model.load_checkpoint(prefix, 0)
+    sym, args_loaded, aux = mx.contrib.neuron.compile(sym, args_loaded, aux, inputs)
 
     # save compiled model
-    mx.model.save_checkpoint(prefix + "_compiled", 0, sym, args, aux)
+    mx.model.save_checkpoint(prefix + "_compiled", 0, sym, args_loaded, aux)
 
 
 ###############################################################################
