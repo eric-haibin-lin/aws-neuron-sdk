@@ -133,7 +133,8 @@ bert, _ = get_model(
     pretrained=False,
     use_pooler=True,
     use_decoder=False,
-    use_classifier=False)
+    use_classifier=False,
+    dropout=0.0)
 net = BERTClassifier(bert, num_classes=2, dropout=args.dropout)
 
 if args.model_parameters:
@@ -222,6 +223,9 @@ def arange_like(x, axis):
 def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwargs):
     return x
 
+def dropout(data=None, p=None, mode=None, axes=None, cudnn_off=None, out=None, name=None, **kwargs):
+    return data
+
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
@@ -230,6 +234,7 @@ f.Embedding = embedding_op
 f.contrib.div_sqrt_dim = div_sqrt_dim
 f.broadcast_axis = broadcast_axis
 f.where = where
+f.Dropout = dropout
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
