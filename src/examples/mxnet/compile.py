@@ -155,8 +155,9 @@ test_batch_size = args.batch_size
 inputs = mx.nd.arange(test_batch_size * seq_length * 768)
 inputs = inputs.reshape(shape=(test_batch_size, seq_length, 768))
 token_types = mx.nd.zeros_like(inputs)
+position_embed = mx.nd.arange(seq_length * 768).reshape((seq_length, 768))
 valid_length = mx.nd.arange(test_batch_size)
-batch = inputs, token_types, valid_length
+batch = inputs, token_types, position_embed, valid_length
 
 
 ###############################################################################
@@ -227,6 +228,155 @@ def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwar
 def dropout(data=None, p=None, mode=None, axes=None, cudnn_off=None, out=None, name=None, **kwargs):
     return data
 
+def bert_model___call__(self, inputs, token_types, position_embed, valid_length=None, masked_positions=None):
+    # pylint: disable=dangerous-default-value, arguments-differ
+    """Generate the representation given the inputs.
+    This is used in training or fine-tuning a BERT model.
+    """
+    return super(nlp.model.BERTModel, self).__call__(inputs, token_types, position_embed, valid_length, masked_positions)
+
+def bert_model_hybrid_forward(self, F, inputs, token_types, position_embed,
+                              valid_length=None, masked_positions=None):
+    # pylint: disable=arguments-differ
+    """Generate the representation given the inputs.
+    This is used in training or fine-tuning a BERT model.
+    """
+    outputs = []
+    seq_out, attention_out = self._encode_sequence(inputs, token_types, position_embed, valid_length)
+    outputs.append(seq_out)
+
+    if self.encoder._output_all_encodings:
+        assert isinstance(seq_out, list)
+        output = seq_out[-1]
+    else:
+        output = seq_out
+
+    if attention_out:
+        outputs.append(attention_out)
+
+    if self._use_pooler:
+        pooled_out = self._apply_pooling(output)
+        outputs.append(pooled_out)
+        if self._use_classifier:
+            next_sentence_classifier_out = self.classifier(pooled_out)
+            outputs.append(next_sentence_classifier_out)
+    if self._use_decoder:
+        assert masked_positions is not None, \
+            'masked_positions tensor is required for decoding masked language model'
+        decoder_out = self._decode(F, output, masked_positions)
+        outputs.append(decoder_out)
+    return tuple(outputs) if len(outputs) > 1 else outputs[0]
+
+def bert_model__encode_sequence(self, inputs, token_types, position_embed, valid_length=None):
+    """Generate the representation given the input sequences.
+    This is used for pre-training or fine-tuning a BERT model.
+    """
+    # embedding
+    embedding = self.word_embed(inputs)
+    if self._use_token_type_embed:
+        type_embedding = self.token_type_embed(token_types)
+        embedding = embedding + type_embedding
+    # encoding
+    outputs, additional_outputs = self.encoder(embedding, position_embed, valid_length=valid_length)
+    return outputs, additional_outputs
+
+def bert_encoder___call__(self, inputs, position_embed, states=None, valid_length=None): #pylint: disable=arguments-differ
+    """Encode the inputs given the states and valid sequence length.
+    Parameters
+    ----------
+    inputs : NDArray or Symbol
+        Input sequence. Shape (batch_size, length, C_in)
+    states : list of NDArrays or Symbols
+        Initial states. The list of initial states and masks
+    valid_length : NDArray or Symbol
+        Valid lengths of each sequence. This is usually used when part of sequence has
+        been padded. Shape (batch_size,)
+    Returns
+    -------
+    encoder_outputs: list
+        Outputs of the encoder. Contains:
+        - outputs of the transformer encoder. Shape (batch_size, length, C_out)
+        - additional_outputs of all the transformer encoder
+    """
+    #return super(nlp.model.BERTEncoder, self).__call__(inputs, position_embed, states, valid_length)
+    return mx.gluon.HybridBlock.__call__(self, inputs, position_embed, states, valid_length)
+
+def bert_encoder_hybrid_forward(self, F, inputs, position_embed, states=None, valid_length=None, position_weight=None):
+    # pylint: disable=arguments-differ
+    """Encode the inputs given the states and valid sequence length.
+    Parameters
+    ----------
+    inputs : NDArray or Symbol
+        Input sequence. Shape (batch_size, length, C_in)
+    states : list of NDArrays or Symbols
+        Initial states. The list of initial states and masks
+    valid_length : NDArray or Symbol
+        Valid lengths of each sequence. This is usually used when part of sequence has
+        been padded. Shape (batch_size,)
+    Returns
+    -------
+    outputs : NDArray or Symbol, or List[NDArray] or List[Symbol]
+        If output_all_encodings flag is False, then the output of the last encoder.
+        If output_all_encodings flag is True, then the list of all outputs of all encoders.
+        In both cases, shape of the tensor(s) is/are (batch_size, length, C_out)
+    additional_outputs : list
+        Either be an empty list or contains the attention weights in this step.
+        The attention weights will have shape (batch_size, length, length) or
+        (batch_size, num_heads, length, length)
+    """
+    # steps = F.contrib.arange_like(inputs, axis=1)
+    mask = None
+    # if valid_length is not None:
+    #     ones = F.ones_like(steps)
+    #     mask = F.broadcast_lesser(F.reshape(steps, shape=(1, -1)),
+    #                               F.reshape(valid_length, shape=(-1, 1)))
+    #     mask = F.broadcast_mul(F.expand_dims(mask, axis=1),
+    #                            F.broadcast_mul(ones, F.reshape(ones, shape=(-1, 1))))
+    #     if states is None:
+    #         states = [mask]
+    #     else:
+    #         states.append(mask)
+    # else:
+    #     mask = None
+
+    # if states is None:
+    #     states = [steps]
+    # else:
+    #     states.append(steps)
+
+    # positional encoding
+    #positional_embed = F.Embedding(steps, position_weight, self._max_length, self._units)
+    inputs = F.broadcast_add(inputs, F.expand_dims(position_embed, axis=0))
+    #inputs = F.broadcast_add(inputs, position_embed)
+
+    if self._dropout:
+        inputs = self.dropout_layer(inputs)
+    inputs = self.layer_norm(inputs)
+    outputs = inputs
+
+    all_encodings_outputs = []
+    additional_outputs = []
+    for cell in self.transformer_cells:
+        outputs, attention_weights = cell(inputs, mask)
+        inputs = outputs
+        if self._output_all_encodings:
+            if valid_length is not None:
+                outputs = F.SequenceMask(outputs, sequence_length=valid_length,
+                                         use_sequence_length=True, axis=1)
+            all_encodings_outputs.append(outputs)
+
+        if self._output_attention:
+            additional_outputs.append(attention_weights)
+
+    if valid_length is not None and not self._output_all_encodings:
+        # if self._output_all_encodings, SequenceMask is already applied above
+        outputs = F.SequenceMask(outputs, sequence_length=valid_length,
+                                 use_sequence_length=True, axis=1)
+
+    if self._output_all_encodings:
+        return all_encodings_outputs, additional_outputs
+    return outputs, additional_outputs
+
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
@@ -236,6 +386,11 @@ f.contrib.div_sqrt_dim = div_sqrt_dim
 f.broadcast_axis = broadcast_axis
 f.where = where
 f.Dropout = dropout
+nlp.model.bert.BERTModel.__call__ = bert_model___call__
+nlp.model.bert.BERTModel._encode_sequence = bert_model__encode_sequence
+nlp.model.bert.BERTModel.hybrid_forward = bert_model_hybrid_forward
+nlp.model.bert.BERTEncoder.__call__ = bert_encoder___call__
+nlp.model.bert.BERTEncoder.hybrid_forward = bert_encoder_hybrid_forward
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
@@ -244,8 +399,8 @@ f.Dropout = dropout
 def export(batch, prefix):
     """Export the model."""
     log.info('Exporting the model ... ')
-    inputs, token_types, valid_length = batch
-    out = net(inputs, token_types) if args.no_length else net(inputs, token_types, valid_length)
+    inputs, token_types, position_embed, valid_length = batch
+    out = net(inputs, token_types, position_embed) if args.no_length else net(inputs, token_types, valid_length)
     if args.debug:
         exit()
     export_special(net, prefix, epoch=0)
@@ -259,23 +414,25 @@ def export_special(net, path, epoch):
     arg_names = set(sym.list_arguments())
     aux_names = set(sym.list_auxiliary_states())
     arg_dict = {}
+    save_fn = mx.nd.save
+    embedding_dict = {}
     for name, param in net.collect_params().items():
         if 'position_weight' in name or 'word_embed_embedding0_weight' in name or 'token_type_embed_embedding0_weight' in name:
-            continue
-        if name in arg_names:
+            embedding_dict[name] = param._reduce()
+        elif name in arg_names:
             arg_dict['arg:%s'%name] = param._reduce()
         else:
             assert name in aux_names, name
             arg_dict['aux:%s'%name] = param._reduce()
-    save_fn = mx.nd.save
     save_fn('%s-%04d.params'%(path, epoch), arg_dict)
+    save_fn('%s-%04d.embeddings'%(path, epoch), embedding_dict)
 
 def infer(prefix):
     """Evaluate the model on a mini-batch."""
     log.info('Test inference with the model ... ')
 
     # import with SymbolBlock. Alternatively, you can use Module.load APIs.
-    names = ['data0', 'data1', 'data2'] if not args.no_length else ['data0', 'data1']
+    names = ['data0', 'data1', 'data2']
     imported_net = mx.gluon.nn.SymbolBlock.imports(prefix + '-symbol.json',
                                                    names, prefix + '-0000.params')
 
@@ -285,14 +442,14 @@ def infer(prefix):
     valid_length = mx.nd.arange(test_batch_size)
 
     # run forward inference
-    out = imported_net(inputs, token_types) if args.no_length else imported_net(inputs, token_types, valid_length)
+    out = imported_net(inputs, token_types, position_embed) if args.no_length else imported_net(inputs, token_types, position_embed, valid_length)
     mx.nd.waitall()
 
     # benchmark speed after warmup
     tic = time.time()
     num_trials = 10
     for _ in range(num_trials):
-        out = imported_net(inputs, token_types) if args.no_length else imported_net(inputs, token_types, valid_length)
+        out = imported_net(inputs, token_types, position_embed) if args.no_length else imported_net(inputs, token_types, position_embed, valid_length)
     mx.nd.waitall()
     toc = time.time()
     log.info('Batch size={}, Thoughput={:.2f} batches/s'
@@ -301,12 +458,14 @@ def infer(prefix):
 def neuron_compile(prefix):
     # compile for Inferentia using Neuron
     if not args.no_length:
+        assert False
         inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data0'),
                   "data1" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data1'),
                   "data2" : mx.nd.ones(shape=(test_batch_size,), name='data2')}
     else:
         inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data0'),
-                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data1')}
+                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data1'),
+                  "data2" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data2')}
 
     sym, args_loaded, aux = mx.model.load_checkpoint(prefix, 0)
     sym, args_loaded, aux = mx.contrib.neuron.compile(sym, args_loaded, aux, inputs)
