@@ -152,8 +152,8 @@ if not args.debug:
 
 test_batch_size = args.batch_size
 
-inputs = mx.nd.arange(test_batch_size * seq_length)
-inputs = inputs.reshape(shape=(test_batch_size, seq_length))
+inputs = mx.nd.arange(test_batch_size * seq_length * 768)
+inputs = inputs.reshape(shape=(test_batch_size, seq_length, 768))
 token_types = mx.nd.zeros_like(inputs)
 valid_length = mx.nd.arange(test_batch_size)
 batch = inputs, token_types, valid_length
@@ -188,8 +188,9 @@ def embedding_op(data=None, weight=None, input_dim=None, output_dim=None, dtype=
     #x_y = f.concat(x_idx, y_idx.reshape((1, -1)), dim=0)
     #encoded = f.gather_nd(weight, x_y)
     #encoded = f.broadcast_add(data.repeat(output_dim), weight.sum() * 0)
-    encoded = f.broadcast_add(f.ones(output_shape), weight.sum() * 0 + data.sum() * 0)
-    return encoded
+    #encoded = f.broadcast_add(f.ones(output_shape), weight.sum() * 0 + data.sum() * 0)
+    #return encoded
+    return data
 
 def embedding(self, F, x, weight):
     out = embedding_op(x, weight, name='fwd', batch_mode=False, **self._kwargs)
@@ -207,18 +208,18 @@ def layer_norm(self, F, data, gamma, beta):
 
 def arange_like(x, axis):
     if axis == 1:
-        slice_x = x.slice(begin=(0, 0, 0), end=(1, None, 1)).reshape((-1))
-    elif axis == 0:
-        slice_x = x.slice(begin=(0, 0, 0), end=(None, 1, 1)).reshape((-1))
+        slice_x = x.slice(begin=(0, 0, 0), end=(1, None, None)).reshape((-1, 768))
+    #elif axis == 0:
+    #    slice_x = x.slice(begin=(0, 0, 0), end=(None, 1, 1)).reshape((-1))
     else:
         raise NotImplementedError
     zeros = f.zeros_like(slice_x)
-    if args.debug:
-        arange = f.arange(start=0, repeat=1, step=1, stop=slice_x.shape[0], dtype='float32')
-    else:
-        arange = f.arange(start=0, repeat=1, step=1, stop=seq_length, dtype='float32')
-    arange = f.elemwise_add(arange, zeros)
-    return arange
+    # if args.debug:
+    #     arange = f.arange(start=0, repeat=768, step=1, stop=slice_x.shape[0], dtype='float32')
+    # else:
+    #     arange = f.arange(start=0, repeat=768, step=1, stop=seq_length, dtype='float32')
+    # arange = f.elemwise_add(arange, zeros)
+    return zeros #arange
 
 def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwargs):
     return x
@@ -247,9 +248,27 @@ def export(batch, prefix):
     out = net(inputs, token_types) if args.no_length else net(inputs, token_types, valid_length)
     if args.debug:
         exit()
-    net.export(prefix, epoch=0)
+    export_special(net, prefix, epoch=0)
     assert os.path.isfile(prefix + '-symbol.json')
     assert os.path.isfile(prefix + '-0000.params')
+
+def export_special(net, path, epoch):
+    sym = net._cached_graph[1]
+    sym.save('%s-symbol.json'%path, remove_amp_cast=False)
+
+    arg_names = set(sym.list_arguments())
+    aux_names = set(sym.list_auxiliary_states())
+    arg_dict = {}
+    for name, param in net.collect_params().items():
+        if 'position_weight' in name or 'word_embed_embedding0_weight' in name or 'token_type_embed_embedding0_weight' in name:
+            continue
+        if name in arg_names:
+            arg_dict['arg:%s'%name] = param._reduce()
+        else:
+            assert name in aux_names, name
+            arg_dict['aux:%s'%name] = param._reduce()
+    save_fn = mx.nd.save
+    save_fn('%s-%04d.params'%(path, epoch), arg_dict)
 
 def infer(prefix):
     """Evaluate the model on a mini-batch."""
@@ -260,8 +279,8 @@ def infer(prefix):
     imported_net = mx.gluon.nn.SymbolBlock.imports(prefix + '-symbol.json',
                                                    names, prefix + '-0000.params')
 
-    inputs = mx.nd.arange(test_batch_size * (seq_length))
-    inputs = inputs.reshape(shape=(test_batch_size, seq_length))
+    inputs = mx.nd.arange(test_batch_size * seq_length * 768)
+    inputs = inputs.reshape(shape=(test_batch_size, seq_length, 768))
     token_types = mx.nd.zeros_like(inputs)
     valid_length = mx.nd.arange(test_batch_size)
 
@@ -282,12 +301,12 @@ def infer(prefix):
 def neuron_compile(prefix):
     # compile for Inferentia using Neuron
     if not args.no_length:
-        inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
-                  "data1" : mx.nd.ones(shape=(1, 128), name='data1'),
-                  "data2" : mx.nd.ones(shape=(1,), name='data2')}
+        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data0'),
+                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data1'),
+                  "data2" : mx.nd.ones(shape=(test_batch_size,), name='data2')}
     else:
-        inputs = {"data0" : mx.nd.ones(shape=(1, 128), name='data0'),
-                  "data1" : mx.nd.ones(shape=(1, 128), name='data1')}
+        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data0'),
+                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data1')}
 
     sym, args_loaded, aux = mx.model.load_checkpoint(prefix, 0)
     sym, args_loaded, aux = mx.contrib.neuron.compile(sym, args_loaded, aux, inputs)
@@ -303,4 +322,4 @@ if __name__ == '__main__':
     prefix = os.path.join(args.output_dir, 'classification')
     export(batch, prefix)
     infer(prefix)
-    neuron_compile(prefix)
+    # neuron_compile(prefix)
