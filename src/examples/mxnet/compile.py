@@ -151,11 +151,12 @@ if not args.debug:
 ###############################################################################
 
 test_batch_size = args.batch_size
+num_units = 1024 if args.model_name == 'bert_24_1024_16' else 768
 
-inputs = mx.nd.arange(test_batch_size * seq_length * 768)
-inputs = inputs.reshape(shape=(test_batch_size, seq_length, 768))
+inputs = mx.nd.arange(test_batch_size * seq_length * num_units)
+inputs = inputs.reshape(shape=(test_batch_size, seq_length, num_units))
 token_types = mx.nd.zeros_like(inputs)
-position_embed = mx.nd.arange(seq_length * 768).reshape((seq_length, 768))
+position_embed = mx.nd.arange(seq_length * num_units).reshape((seq_length, num_units))
 valid_length = mx.nd.arange(test_batch_size)
 batch = inputs, token_types, position_embed, valid_length
 
@@ -208,22 +209,22 @@ def layer_norm(self, F, data, gamma, beta):
     return F.broadcast_add(F.broadcast_mul(gamma, X_hat), beta)
 
 def arange_like(x, axis):
-    if axis == 1:
-        slice_x = x.slice(begin=(0, 0, 0), end=(1, None, None)).reshape((-1, 768))
-    #elif axis == 0:
-    #    slice_x = x.slice(begin=(0, 0, 0), end=(None, 1, 1)).reshape((-1))
-    else:
-        raise NotImplementedError
-    zeros = f.zeros_like(slice_x)
+    #if axis == 1:
+    #    slice_x = x.slice(begin=(0, 0, 0), end=(1, None, None)).reshape((-1, num_units))
+    ##elif axis == 0:
+    ##    slice_x = x.slice(begin=(0, 0, 0), end=(None, 1, 1)).reshape((-1))
+    #else:
+    #    raise NotImplementedError
+    #zeros = f.zeros_like(slice_x)
     # if args.debug:
-    #     arange = f.arange(start=0, repeat=768, step=1, stop=slice_x.shape[0], dtype='float32')
+    #     arange = f.arange(start=0, repeat=units, step=1, stop=slice_x.shape[0], dtype='float32')
     # else:
-    #     arange = f.arange(start=0, repeat=768, step=1, stop=seq_length, dtype='float32')
+    arange = f.arange(start=0, repeat=num_units, step=1, stop=seq_length, dtype='float32')
     # arange = f.elemwise_add(arange, zeros)
-    return zeros #arange
+    return arange
 
 def where(condition=None, x=None, y=None, name=None, attr=None, out=None, **kwargs):
-    return x
+    return (condition == 0) * y + (1 - condition == 0) * x
 
 def dropout(data=None, p=None, mode=None, axes=None, cudnn_off=None, out=None, name=None, **kwargs):
     return data
@@ -281,68 +282,30 @@ def bert_model__encode_sequence(self, inputs, token_types, position_embed, valid
     return outputs, additional_outputs
 
 def bert_encoder___call__(self, inputs, position_embed, states=None, valid_length=None): #pylint: disable=arguments-differ
-    """Encode the inputs given the states and valid sequence length.
-    Parameters
-    ----------
-    inputs : NDArray or Symbol
-        Input sequence. Shape (batch_size, length, C_in)
-    states : list of NDArrays or Symbols
-        Initial states. The list of initial states and masks
-    valid_length : NDArray or Symbol
-        Valid lengths of each sequence. This is usually used when part of sequence has
-        been padded. Shape (batch_size,)
-    Returns
-    -------
-    encoder_outputs: list
-        Outputs of the encoder. Contains:
-        - outputs of the transformer encoder. Shape (batch_size, length, C_out)
-        - additional_outputs of all the transformer encoder
-    """
     #return super(nlp.model.BERTEncoder, self).__call__(inputs, position_embed, states, valid_length)
     return mx.gluon.HybridBlock.__call__(self, inputs, position_embed, states, valid_length)
 
 def bert_encoder_hybrid_forward(self, F, inputs, position_embed, states=None, valid_length=None, position_weight=None):
-    # pylint: disable=arguments-differ
-    """Encode the inputs given the states and valid sequence length.
-    Parameters
-    ----------
-    inputs : NDArray or Symbol
-        Input sequence. Shape (batch_size, length, C_in)
-    states : list of NDArrays or Symbols
-        Initial states. The list of initial states and masks
-    valid_length : NDArray or Symbol
-        Valid lengths of each sequence. This is usually used when part of sequence has
-        been padded. Shape (batch_size,)
-    Returns
-    -------
-    outputs : NDArray or Symbol, or List[NDArray] or List[Symbol]
-        If output_all_encodings flag is False, then the output of the last encoder.
-        If output_all_encodings flag is True, then the list of all outputs of all encoders.
-        In both cases, shape of the tensor(s) is/are (batch_size, length, C_out)
-    additional_outputs : list
-        Either be an empty list or contains the attention weights in this step.
-        The attention weights will have shape (batch_size, length, length) or
-        (batch_size, num_heads, length, length)
-    """
-    # steps = F.contrib.arange_like(inputs, axis=1)
+    #steps = F.contrib.arange_like(inputs, axis=1)
     mask = None
-    # if valid_length is not None:
-    #     ones = F.ones_like(steps)
-    #     mask = F.broadcast_lesser(F.reshape(steps, shape=(1, -1)),
-    #                               F.reshape(valid_length, shape=(-1, 1)))
-    #     mask = F.broadcast_mul(F.expand_dims(mask, axis=1),
-    #                            F.broadcast_mul(ones, F.reshape(ones, shape=(-1, 1))))
-    #     if states is None:
-    #         states = [mask]
-    #     else:
-    #         states.append(mask)
-    # else:
-    #     mask = None
+    if valid_length is not None:
+        steps = F.arange(seq_length, dtype='float32')
+        ones = F.ones_like(steps)
+        mask = F.broadcast_lesser(F.reshape(steps, shape=(1, -1)),
+                                  F.reshape(valid_length, shape=(-1, 1)))
+        mask = F.broadcast_mul(F.expand_dims(mask, axis=1),
+                               F.broadcast_mul(ones, F.reshape(ones, shape=(-1, 1))))
+        # if states is None:
+        #     states = [mask]
+        # else:
+        #     states.append(mask)
+    else:
+        mask = None
 
-    # if states is None:
-    #     states = [steps]
-    # else:
-    #     states.append(steps)
+    #if states is None:
+    #    states = [steps]
+    #else:
+    #    states.append(steps)
 
     # positional encoding
     #positional_embed = F.Embedding(steps, position_weight, self._max_length, self._units)
@@ -377,6 +340,15 @@ def bert_encoder_hybrid_forward(self, F, inputs, position_embed, states=None, va
         return all_encodings_outputs, additional_outputs
     return outputs, additional_outputs
 
+def bert_classifier___call__(self, inputs, token_types, position_embed, valid_length=None):
+    # pylint: disable=dangerous-default-value, arguments-differ
+    return super(BERTClassifier, self).__call__(inputs, token_types, position_embed, valid_length)
+
+def bert_classifier_hybrid_forward(self, F, inputs, token_types, position_embed, valid_length=None):
+    # pylint: disable=arguments-differ
+    _, pooler_out = self.bert(inputs, token_types, position_embed, valid_length)
+    return self.classifier(pooler_out)
+
 nlp.model.GELU.hybrid_forward = gelu
 mx.gluon.nn.LayerNorm.hybrid_forward = layer_norm
 mx.gluon.nn.Embedding.hybrid_forward = embedding
@@ -391,6 +363,8 @@ nlp.model.bert.BERTModel._encode_sequence = bert_model__encode_sequence
 nlp.model.bert.BERTModel.hybrid_forward = bert_model_hybrid_forward
 nlp.model.bert.BERTEncoder.__call__ = bert_encoder___call__
 nlp.model.bert.BERTEncoder.hybrid_forward = bert_encoder_hybrid_forward
+nlp.model.bert.BERTClassifier.__call__ = bert_classifier___call__
+nlp.model.bert.BERTClassifier.hybrid_forward = bert_classifier_hybrid_forward
 
 ###############################################################################
 #             End Alternative Inferentia Compatible Implementation            #
@@ -399,8 +373,7 @@ nlp.model.bert.BERTEncoder.hybrid_forward = bert_encoder_hybrid_forward
 def export(batch, prefix):
     """Export the model."""
     log.info('Exporting the model ... ')
-    inputs, token_types, position_embed, valid_length = batch
-    out = net(inputs, token_types, position_embed) if args.no_length else net(inputs, token_types, valid_length)
+    out = net(inputs, token_types, position_embed) if args.no_length else net(inputs, token_types, position_embed, valid_length)
     if args.debug:
         exit()
     export_special(net, prefix, epoch=0)
@@ -432,14 +405,9 @@ def infer(prefix):
     log.info('Test inference with the model ... ')
 
     # import with SymbolBlock. Alternatively, you can use Module.load APIs.
-    names = ['data0', 'data1', 'data2']
+    names = ['data0', 'data1', 'data2', 'data3']
     imported_net = mx.gluon.nn.SymbolBlock.imports(prefix + '-symbol.json',
                                                    names, prefix + '-0000.params')
-
-    inputs = mx.nd.arange(test_batch_size * seq_length * 768)
-    inputs = inputs.reshape(shape=(test_batch_size, seq_length, 768))
-    token_types = mx.nd.zeros_like(inputs)
-    valid_length = mx.nd.arange(test_batch_size)
 
     # run forward inference
     out = imported_net(inputs, token_types, position_embed) if args.no_length else imported_net(inputs, token_types, position_embed, valid_length)
@@ -458,14 +426,14 @@ def infer(prefix):
 def neuron_compile(prefix):
     # compile for Inferentia using Neuron
     if not args.no_length:
-        assert False
-        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data0'),
-                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data1'),
-                  "data2" : mx.nd.ones(shape=(test_batch_size,), name='data2')}
+        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length, num_units), name='data0'),
+                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, num_units), name='data1'),
+                  "data2" : mx.nd.ones(shape=(seq_length, num_units), name='data2'),
+                  "data3" : mx.nd.ones(shape=(test_batch_size,), name='data3')}
     else:
-        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data0'),
-                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, 768), name='data1'),
-                  "data2" : mx.nd.ones(shape=(test_batch_size, seq_length), name='data2')}
+        inputs = {"data0" : mx.nd.ones(shape=(test_batch_size, seq_length, num_units), name='data0'),
+                  "data1" : mx.nd.ones(shape=(test_batch_size, seq_length, num_units), name='data1'),
+                  "data2" : mx.nd.ones(shape=(seq_length, num_units), name='data2')}
 
     sym, args_loaded, aux = mx.model.load_checkpoint(prefix, 0)
     sym, args_loaded, aux = mx.contrib.neuron.compile(sym, args_loaded, aux, inputs)
@@ -478,7 +446,7 @@ def neuron_compile(prefix):
 #                              Export the model                               #
 ###############################################################################
 if __name__ == '__main__':
-    prefix = os.path.join(args.output_dir, 'classification')
+    prefix = os.path.join(args.output_dir, 'classification-' + args.model_name + '-' + str(args.seq_length))
     export(batch, prefix)
     infer(prefix)
     # neuron_compile(prefix)

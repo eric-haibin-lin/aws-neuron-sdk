@@ -29,12 +29,12 @@ Place the saved model in a directory named "gluonnlp_bert" under the `bert_demo`
 Run the following to compile BERT for an input size of 128 and batch size of 1.
 The compilation output is stored in `neuron_bert`.
 ```
-python compile.py --output_dir neuron_bert --seq_length 128  --batch_size 1 --model_parameters gluonnlp_bert/sst.params --no_length
+python compile.py --output_dir neuron_bert --seq_length 128  --batch_size 1 --model_parameters gluonnlp_bert/sst.params --model_name bert_12_768_12
 ```
 
 ## Running the inference demo
 
 Run the command below to run BERT inference on CPU:
 ```bash
-python inference.py --compiled_model neuron_bert/classification
+python inference.py --compiled_model neuron_bert/classification-bert_12_768_12 --max_len 128
 ```
