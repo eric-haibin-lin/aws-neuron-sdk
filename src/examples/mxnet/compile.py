@@ -289,7 +289,7 @@ def bert_encoder_hybrid_forward(self, F, inputs, position_embed, states=None, va
     #steps = F.contrib.arange_like(inputs, axis=1)
     mask = None
     if valid_length is not None:
-        steps = F.arange(seq_length, dtype='float32')
+        steps = F.arange(start=0, stop=seq_length, dtype='float32')
         ones = F.ones_like(steps)
         mask = F.broadcast_lesser(F.reshape(steps, shape=(1, -1)),
                                   F.reshape(valid_length, shape=(-1, 1)))
